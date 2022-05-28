@@ -2,3 +2,5 @@ lottery_bot.session
 venv
 tgbot.db
 .env
+telegram_lottery.py
+lottery_bot.session-journal
