@@ -1,0 +1,8 @@
+{
+  "apps": [{
+      "name": "telegram_lottery",
+      "script": "./telegram_lottery.py",
+      "instances": "1",
+      "interpreter" : "./venv/bin/python"
+  }]
+}

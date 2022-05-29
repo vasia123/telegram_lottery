@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from dblite import aioDbLite
 from pyrogram import Client
 from pyrogram import filters
@@ -33,12 +34,10 @@ main_text_lottery = """Розыгрыш **"[title]"** начался!
 
 text_winner = """
 Розыгрыш **"[title]"** окочен!
-🥳🥳🥳
+🥳🥳🥳🥳🥳🥳🥳🥳🥳
 
 Поздравляем **[[user_name]](tg://user?id=[user_id])** с победой!!!
-🎉🎉🎉
-🎊🎊🎊
-👏👏👏
+🎉🎉🎉🎊🎊🎊👏👏👏
 """
 
 class LotteryType(TypedDict):
@@ -55,7 +54,7 @@ class ParticipantType(TypedDict):
     user_name: int
     lottery_id: int
     tiket: int
-    round: str
+    lottery_round: str
     
 def get_main_message(lottery_title: str, lottery_round: int, lottery_status: str, lottery_participants: str):
     return main_text_lottery \
@@ -99,12 +98,14 @@ class LotteryBot:
         )
         await self.aiodb.create(
             'participants', 
+            id='INTEGER PRIMARY KEY AUTOINCREMENT',
             user_id='int',
             user_name='TEXT NOT NULL',
             lottery_id='int',
             tiket='int',
-            round='int',
+            lottery_round='int',
         )
+        await self.aiodb.cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS "only_one_user_per_round" ON participants("user_id", "lottery_id", "lottery_round");')
         await self.app.start()
         await self.app.set_bot_commands([
             BotCommand("startlottery", "Начать новый розыгрыш"),
@@ -130,16 +131,17 @@ class LotteryBot:
             }
         return lottery
 
-    async def load_participants(self, lottery_id: int, lottery_round: int) -> list[ParticipantType]:
-        participants_raw = await self.aiodb.select('participants', '*', lottery_id=lottery_id, round=lottery_round)
+    async def load_participants(self, lottery_id: int, lottery_round: int, **kwargs) -> list[ParticipantType]:
+        participants_raw = await self.aiodb.select('participants', '*', lottery_id=lottery_id, lottery_round=lottery_round, **kwargs)
         participants: list[ParticipantType] = []
         for participant_raw in participants_raw:
             participants.append({
-                "user_id": participant_raw[0],
-                "user_name": participant_raw[1],
-                "lottery_id": participant_raw[2],
-                "tiket": participant_raw[3],
-                "round": participant_raw[4],
+                "id": participant_raw[0],
+                "user_id": participant_raw[1],
+                "user_name": participant_raw[2],
+                "lottery_id": participant_raw[3],
+                "tiket": participant_raw[4],
+                "lottery_round": participant_raw[5],
             })
         return participants
 
@@ -161,7 +163,7 @@ class LotteryBot:
                 user_name=participant['user_name'],
                 lottery_id=participant['lottery_id'],
                 tiket=0,
-                round=new_round,
+                lottery_round=new_round,
             )
 
 
@@ -351,23 +353,38 @@ class LotteryBot:
         active_lottery = await self.load_active_lottery(message.chat.id)
         if active_lottery:
             # засчитываем только первый бросок
-            participants = await self.load_participants(active_lottery['id'], active_lottery['round'])
-            already_exist = next((x for x in participants if x['user_id'] == message.from_user.id), None)
-            if not already_exist or already_exist['tiket'] == 0:
-                await message.reply(f"Результат броска (**{message.dice.value}**) засчитан")
+            participants = await self.load_participants(active_lottery['id'], active_lottery['round'], user_id=message.from_user.id)
+            if len(participants) == 0 or participants[0]['tiket'] == 0:
                 username = message.from_user.username
                 if message.from_user.first_name:
                     username = message.from_user.first_name
                     if message.from_user.last_name:
                         username += " " + message.from_user.last_name
-                await self.aiodb.add(
-                    'participants', 
-                    user_id=message.from_user.id,
-                    user_name=username,
-                    lottery_id=active_lottery['id'],
-                    tiket=message.dice.value,
-                    round=active_lottery['round'],
-                )
+                new_record = True
+                if len(participants) > 0 and participants[0]['tiket'] == 0:
+                    await self.aiodb.update(
+                        'participants', 
+                        user_id=message.from_user.id,
+                        user_name=username,
+                        lottery_id=active_lottery['id'],
+                        tiket=message.dice.value,
+                        lottery_round=active_lottery['round'],
+                        id=participants[0]['id']
+                    )
+                else:
+                    try:
+                        await self.aiodb.add(
+                            'participants', 
+                            user_id=message.from_user.id,
+                            user_name=username,
+                            lottery_id=active_lottery['id'],
+                            tiket=message.dice.value,
+                            lottery_round=active_lottery['round'],
+                        )
+                    except sqlite3.IntegrityError:
+                        new_record = False
+                if new_record:
+                    await message.reply(f"Результат броска (**{message.dice.value}**) засчитан")
                 # Update message
                 lottery_participants = await self.load_participants(active_lottery['id'], active_lottery['round'])
                 text_participants = self.render_participants(lottery_participants)
@@ -388,6 +405,7 @@ class LotteryBot:
                 # если раунд > 1 и все участники отправили результаты - начинать следующий раунд
                 if active_lottery['round'] > 1:
                     this_round_participants = await self.load_participants(active_lottery['id'], active_lottery['round'])
+                    this_round_participants = [d for d in this_round_participants if d['tiket'] > 0]
                     previous_round_winners = await self.get_round_winners(active_lottery['id'], active_lottery['round'] - 1)
                     if len(this_round_participants) == len(previous_round_winners):
                         await self._nextround(client, message)
