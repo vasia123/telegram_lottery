@@ -168,7 +168,7 @@ class LotteryBot:
 
 
     def render_participants(self, lottery_participants: list[ParticipantType]) -> str:
-        sorted_participants = sorted(lottery_participants, key=lambda d: d['tiket']) 
+        sorted_participants = sorted(lottery_participants, key=lambda d: d['tiket'], reverse=True) 
         participants = "    "
         if len(sorted_participants) == 0:
             participants += "__пока нет участников__"
@@ -323,7 +323,7 @@ class LotteryBot:
                     text=get_main_message(
                         active_lottery['title'],
                         new_round,
-                        render_lottery_status(active_lottery['status'], active_lottery['round']),
+                        render_lottery_status(active_lottery['status'], new_round),
                         text_participants,
                     ),
                     disable_web_page_preview=True,
